@@ -1,0 +1,98 @@
+name: iot-stream-analytics
+
+services:
+  # the edge devices send schemaless json data to via mqtt emqx
+  datagen:
+    image: docker.io/emqx/mqttx-cli:v1.9.7
+    command: mqttx simulate --hostname emqx -f /tmp/datagen.js -pf json -t example -c 10 -im 3000
+    volumes:
+      - ./datagen.js:/tmp/datagen.js
+    depends_on:
+      emqx:
+        condition: service_healthy
+
+  # emqx is the mqtt broker
+  emqx:
+    image: docker.io/library/emqx:5.3.1
+    healthcheck:
+      test: emqx_ctl status | grep -q 'is started'
+
+  # connect subscribes to emqx and writes the data,
+  # as raw bytestream without schema, to kafka
+  connect:
+    build:
+      context: ./build/
+      target: connect-mqtt
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: kafka:9092
+      CONNECTOR_CONFLUENT_TOPIC_BOOTSTRAP_SERVERS: kafka:9092
+      CONNECTOR_MQTT_SERVER_URI: tcp://emqx:1883
+      CONNECTOR_MQTT_TOPICS: example
+      CONNECTOR_KAFKA_TOPIC: mqtt-example
+    depends_on:
+      emqx:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    healthcheck:
+      test: wget -qO - http://localhost:8083/connectors || exit 1
+
+  # kafka is the central messge broker and persistence layer
+  kafka:
+    build: ./build/
+    healthcheck:
+      test: kcat -b localhost:9092 -L || exit 1
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+
+  # ksqldb is a stream processing engine that uses kafka
+  # as its persistence layer
+  ksqldb:
+    image: docker.io/confluentinc/ksqldb-server:0.29.0
+    environment:
+      KSQL_CONFLUENT_SUPPORT_METRICS_ENABLE: "false"
+      KSQL_LISTENERS: http://0.0.0.0:8088
+      KSQL_BOOTSTRAP_SERVERS: kafka:9092
+      KSQL_KSQL_LOGGING_PROCESSING_STREAM_AUTO_CREATE: "true"
+      KSQL_KSQL_LOGGING_PROCESSING_TOPIC_AUTO_CREATE: "true"
+      KSQL_KSQL_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+    healthcheck:
+      test:  wget -qO - http://localhost:8088 || exit 1
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+
+  # take the raw mqtt data, partitions it by device id
+  # and parameter id, and write it as avro to back to kafka.
+  # Additionally, register the message schema in the schema registry.
+  # This makes the data useable for further processing.
+  # The keys are chosen with query use cases in mind.
+  ksqldb-migration:
+    image: docker.io/confluentinc/ksqldb-cli:0.29.0
+    command: ksql -f /tmp/migration.sql http://ksqldb:8088
+    volumes:
+      - ./migration.sql:/tmp/migration.sql
+    depends_on:
+      ksqldb:
+        condition: service_healthy
+
+
+  # the schema registry stores the message schemas and can be used
+  # by the different components interacting with kafka.
+  schema-registry:
+    image: docker.io/confluentinc/cp-schema-registry:7.5.0
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    healthcheck:
+      test: curl -fs http://localhost:8081/config || exit 1
+    depends_on:
+      kafka:
+        condition: service_healthy
