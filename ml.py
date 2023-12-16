@@ -20,8 +20,8 @@ pivot = raw.pivot_table(index=["WSTART", "WEND", "DID"], columns=["PID"], values
 
 print("----------")
 print("[raw data]")
-print(raw.head(3))
+print(raw.head())
 print()
 print("--------------")
 print("[pivoted data]")
-print(pivot.head(9))
+print(pivot)

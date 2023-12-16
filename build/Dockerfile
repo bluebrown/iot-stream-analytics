@@ -9,7 +9,7 @@ RUN tar -xzf /tmp/kafka.tgz -C /opt && \
 
 FROM $base as kafka-base
 RUN apt-get -y update
-RUN apt-get -y install default-jre
+RUN apt-get -y install default-jre curl
 COPY --from=downloader /opt/kafka /opt/kafka
 ENV KAFKA_HOME=/opt/kafka PATH=${PATH}:/opt/kafka/bin
 WORKDIR $KAFKA_HOME
