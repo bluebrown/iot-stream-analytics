@@ -3,7 +3,7 @@ module.exports = {
   generator: function (faker, options) {
     const data = {
       deviceId: options.clientId,
-      parameterId: faker.datatype.number({ min: 1, max: 2 * 60000 / options.messageInterval, precision: 1 }),
+      parameterId: faker.datatype.number({ min: 1, max: (60000 / 4) / options.messageInterval, precision: 1 }),
       state: faker.helpers.arrayElement(['OK', 'OK', 'OK', 'REPLACE', 'OK', 'OK', 'OK']),
     };
     if (data.state === 'OK') {

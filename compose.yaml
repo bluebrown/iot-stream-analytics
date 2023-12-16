@@ -4,7 +4,7 @@ services:
   # the edge devices send schemaless json data to via mqtt emqx
   datagen:
     image: docker.io/emqx/mqttx-cli:v1.9.7
-    command: mqttx simulate --hostname emqx -f /tmp/datagen.js -pf json -t example -c 5 -im 6000
+    command: mqttx simulate --hostname emqx -f /tmp/datagen.js -pf json -t example -c 3 -im 2500
     volumes:
       - ./datagen.js:/tmp/datagen.js
     depends_on:
@@ -17,8 +17,8 @@ services:
     healthcheck:
       test: emqx_ctl status | grep -q 'is started'
 
-  # connect subscribes to emqx and writes the data,
-  # as raw bytestream without schema, to kafka
+  # connect subscribes to emqx and writes the data, as raw bytestream without
+  # schema, to kafka
   connect-source:
     build:
       context: ./build/
@@ -47,8 +47,8 @@ services:
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
 
-  # ksqldb is a stream processing engine that uses kafka
-  # as its persistence layer
+  # ksqldb is a stream processing engine that uses kafka as its persistence
+  # layer
   ksqldb:
     image: docker.io/confluentinc/ksqldb-server:0.29.0
     environment:
@@ -66,14 +66,12 @@ services:
       schema-registry:
         condition: service_healthy
 
-  # take the raw mqtt data, partitions it by device id
-  # and parameter id, and write it as avro to back to kafka.
-  # Additionally, register the message schema in the schema registry.
-  # This makes the data useable for further processing.
-  # The keys are chosen with query use cases in mind.
-  # The migration also creates a materialized view that
-  # aggregates the data by device id and parameter id
-  # indented to be used for the windowed export.
+  # take the raw mqtt data, partitions it by device id and parameter id, and
+  # write it as as structured data to back to kafka. Additionally, register the
+  # message schema in the schema registry. This makes the data useable for
+  # further processing. The keys are chosen with query use cases in mind. The
+  # migration also creates a materialized view that aggregates the data by
+  # device id and parameter id indented to be used for the windowed export
   ksqldb-migration:
     image: docker.io/confluentinc/ksqldb-cli:0.29.0
     command: ksql -f /tmp/migration.sql http://ksqldb:8088
@@ -85,7 +83,7 @@ services:
 
 
   # the schema registry stores the message schemas and can be used
-  # by the different components interacting with kafka.
+  # by the different components interacting with kafka
   schema-registry:
     image: docker.io/confluentinc/cp-schema-registry:7.5.0
     environment:
@@ -98,7 +96,8 @@ services:
       kafka:
         condition: service_healthy
 
-  # export the windowed parameter data to s3 using the parquet format
+  # export the windowed parameter data to s3,
+  # using the parquet format
   connect-sink:
     build:
       context: ./build/
@@ -112,14 +111,14 @@ services:
       CONNECTOR_S3_PATH_STYLE_ACCESS_ENABLED: "true"
       CONNECTOR_TOPICS: device-parameter-windowed
       CONNECTOR_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
-      CONNECTOR_FLUSH_SIZE: 250
+      CONNECTOR_FLUSH_SIZE: 450
     depends_on:
       ksqldb-migration:
         condition: service_completed_successfully
     healthcheck:
       test: curl -fs http://localhost:8083/connectors || exit 1
 
-  # s3 compatible storage for the export
+  # s3 compatible storage for the parquet export
   minio:
     image: quay.io/minio/minio:RELEASE.2023-12-14T18-51-57Z
     entrypoint:
