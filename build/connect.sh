@@ -7,7 +7,7 @@ connect=/opt/kafka/config/connect-standalone.properties
 config_to_env "CONNECT" <"$connect"
 config_from_env "CONNECT" >"$connect"
 
-connector=/opt/kafka/config/connector-mqtt-source.properties
+connector=/opt/kafka/config/connector.properties
 config_to_env "CONNECTOR" <"$connector"
 config_from_env "CONNECTOR" >"$connector"
 

@@ -4,7 +4,7 @@ services:
   # the edge devices send schemaless json data to via mqtt emqx
   datagen:
     image: docker.io/emqx/mqttx-cli:v1.9.7
-    command: mqttx simulate --hostname emqx -f /tmp/datagen.js -pf json -t example -c 10 -im 3000
+    command: mqttx simulate --hostname emqx -f /tmp/datagen.js -pf json -t example -c 5 -im 6000
     volumes:
       - ./datagen.js:/tmp/datagen.js
     depends_on:
@@ -19,7 +19,7 @@ services:
 
   # connect subscribes to emqx and writes the data,
   # as raw bytestream without schema, to kafka
-  connect:
+  connect-source:
     build:
       context: ./build/
       target: connect-mqtt
@@ -34,8 +34,6 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
-      schema-registry:
-        condition: service_healthy
     healthcheck:
       test: wget -qO - http://localhost:8083/connectors || exit 1
 
@@ -43,7 +41,7 @@ services:
   kafka:
     build: ./build/
     healthcheck:
-      test: kcat -b localhost:9092 -L || exit 1
+      test: kafka-topics.sh --bootstrap-server kafka:9092 --list || exit 1
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
@@ -73,6 +71,9 @@ services:
   # Additionally, register the message schema in the schema registry.
   # This makes the data useable for further processing.
   # The keys are chosen with query use cases in mind.
+  # The migration also creates a materialized view that
+  # aggregates the data by device id and parameter id
+  # indented to be used for the windowed export.
   ksqldb-migration:
     image: docker.io/confluentinc/ksqldb-cli:0.29.0
     command: ksql -f /tmp/migration.sql http://ksqldb:8088
@@ -96,3 +97,45 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+
+  # export the windowed parameter data to s3 using the parquet format
+  connect-sink:
+    build:
+      context: ./build/
+      target: connect-s3
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: kafka:9092
+      CONNECTOR_AWS_ACCESS_KEY_ID: minio
+      CONNECTOR_AWS_SECRET_ACCESS_KEY: minio123
+      CONNECTOR_STORE_URL: http://minio:9000
+      CONNECTOR_S3_BUCKET_NAME: kafka
+      CONNECTOR_S3_PATH_STYLE_ACCESS_ENABLED: "true"
+      CONNECTOR_TOPICS: device-parameter-windowed
+      CONNECTOR_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      CONNECTOR_FLUSH_SIZE: 250
+    depends_on:
+      ksqldb-migration:
+        condition: service_completed_successfully
+    healthcheck:
+      test: wget -qO - http://localhost:8083/connectors || exit 1
+
+  # s3 compatible storage for the export
+  minio:
+    image: quay.io/minio/minio:RELEASE.2023-12-14T18-51-57Z
+    entrypoint:
+      - bash
+      - -ec
+    command:
+      - |
+        minio server /data --console-address ':9001' &
+        pid=$$1
+        sleep 5
+        mc alias set minio http://localhost:9000 minio minio123
+        mc mb minio/kafka || true
+        wait $$pid
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    ports:
+      - 127.0.0.1:9000:9000 # s3 api
+      - 127.0.0.1:9001:9001 # web ui
