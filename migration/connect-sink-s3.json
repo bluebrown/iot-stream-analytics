@@ -1,0 +1,18 @@
+{
+  "name": "s3-sink",
+  "config": {
+    "topics": "device-parameter-windowed",
+    "flush.size": 450,
+    "connector.class": "io.confluent.connect.s3.S3SinkConnector",
+    "storage.class": "io.confluent.connect.s3.storage.S3Storage",
+    "format.class": "io.confluent.connect.s3.format.parquet.ParquetFormat",
+    "parquet.codec": "snappy",
+    "aws.access.key.id": "minio",
+    "aws.secret.access.key": "minio123",
+    "store.url": "http://minio:9000",
+    "s3.path.style.access.enabled": true,
+    "s3.bucket.name": "kafka",
+    "value.converter": "io.confluent.connect.protobuf.ProtobufConverter",
+    "value.converter.schema.registry.url": "http://schema-registry:8081"
+  }
+}

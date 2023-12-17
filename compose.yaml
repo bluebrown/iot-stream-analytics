@@ -1,7 +1,7 @@
 name: iot-stream-analytics
 
 services:
-  # the edge devices send schemaless json data to via mqtt emqx
+  # simulate edge devices sending data to the system
   datagen:
     image: docker.io/emqx/mqttx-cli:v1.9.7
     command: mqttx simulate --hostname emqx -f /tmp/datagen.js -pf json -t example -c 3 -im 2500
@@ -10,34 +10,37 @@ services:
     depends_on:
       emqx:
         condition: service_healthy
+      ksqldb:
+        condition: service_healthy
 
-  # emqx is the mqtt broker
+  # mqtt as lightweight message broker, for edge devices
   emqx:
     image: docker.io/library/emqx:5.3.1
     healthcheck:
       test: emqx_ctl status | grep -q 'is started'
 
-  # connect subscribes to emqx and writes the data, as raw bytestream without
-  # schema, to kafka
-  connect-source:
+  # pool of connect workers to ingest and export data,
+  # from and to other systems
+  connect:
     build:
       context: ./build/
-      target: connect-mqtt
+      target: connect
+    deploy:
+      replicas: 2
     environment:
       CONNECT_BOOTSTRAP_SERVERS: kafka:9092
-      CONNECTOR_CONFLUENT_TOPIC_BOOTSTRAP_SERVERS: kafka:9092
-      CONNECTOR_MQTT_SERVER_URI: tcp://emqx:1883
-      CONNECTOR_MQTT_TOPICS: example
-      CONNECTOR_KAFKA_TOPIC: mqtt-example
-    depends_on:
-      emqx:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
+    volumes:
+      - ./vendor:/opt/kafka/plugins/vendor
     healthcheck:
       test: curl -fs http://localhost:8083/connectors || exit 1
+    depends_on:
+      kafka:
+        condition: service_healthy
+      # not required but helps to reduce backpreassurre duren startup
+      schema-registry:
+        condition: service_healthy
 
-  # kafka is the central messge broker and persistence layer
+  # the central message broker, backing the other services
   kafka:
     build: ./build/
     healthcheck:
@@ -47,8 +50,21 @@ services:
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
 
-  # ksqldb is a stream processing engine that uses kafka as its persistence
-  # layer
+  # allows to store and retrieve schemas for the data
+  schema-registry:
+    image: docker.io/confluentinc/cp-schema-registry:7.5.0
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    healthcheck:
+      test: curl -fs http://localhost:8081/config || exit 1
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  # stream processing engine, to manipulate the data as
+  # it flows through the system
   ksqldb:
     image: docker.io/confluentinc/ksqldb-server:0.29.0
     environment:
@@ -65,73 +81,42 @@ services:
         condition: service_healthy
       schema-registry:
         condition: service_healthy
-
-  # take the raw mqtt data, partitions it by device id and parameter id, and
-  # write it as as structured data to back to kafka. Additionally, register the
-  # message schema in the schema registry. This makes the data useable for
-  # further processing. The keys are chosen with query use cases in mind. The
-  # migration also creates a materialized view that aggregates the data by
-  # device id and parameter id indented to be used for the windowed export
-  ksqldb-migration:
-    image: docker.io/confluentinc/ksqldb-cli:0.29.0
-    command: ksql -f /tmp/migration.sql http://ksqldb:8088
-    volumes:
-      - ./migration.sql:/tmp/migration.sql
-    depends_on:
-      ksqldb:
+      connect:
         condition: service_healthy
 
-
-  # the schema registry stores the message schemas and can be used
-  # by the different components interacting with kafka
-  schema-registry:
-    image: docker.io/confluentinc/cp-schema-registry:7.5.0
+  # the migration configures the system, by creating topics,
+  # schemas, connectors, and ksql queries.
+  # this is because the system is loosely coupled, and
+  # can be deployed in different ways, depending on the
+  # requirements.
+  migration:
+    build: ./migration/build/
+    entrypoint: migration/migrate.sh
     environment:
-      SCHEMA_REGISTRY_HOST_NAME: schema-registry
-      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
-      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
-    healthcheck:
-      test: curl -fs http://localhost:8081/config || exit 1
+      KAFKA_BOOTSTRAP_SERVER: kafka:9092
+      KAFKA_NETCLI: kafka:7777
+      CONNECT_URL: http://connect:8083
+      KSQL_URL: http://ksqldb:8088
+      MINIO_URL: http://minio:9000
+    volumes:
+      - ./migration:/migration
     depends_on:
       kafka:
         condition: service_healthy
+      connect:
+        condition: service_healthy
+      ksqldb:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      emqx:
+        condition: service_healthy
 
-  # export the windowed parameter data to s3,
-  # using the parquet format
-  connect-sink:
-    build:
-      context: ./build/
-      target: connect-s3
-    environment:
-      CONNECT_BOOTSTRAP_SERVERS: kafka:9092
-      CONNECTOR_AWS_ACCESS_KEY_ID: minio
-      CONNECTOR_AWS_SECRET_ACCESS_KEY: minio123
-      CONNECTOR_STORE_URL: http://minio:9000
-      CONNECTOR_S3_BUCKET_NAME: kafka
-      CONNECTOR_S3_PATH_STYLE_ACCESS_ENABLED: "true"
-      CONNECTOR_TOPICS: device-parameter-windowed
-      CONNECTOR_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
-      CONNECTOR_FLUSH_SIZE: 450
-    depends_on:
-      ksqldb-migration:
-        condition: service_completed_successfully
-    healthcheck:
-      test: curl -fs http://localhost:8083/connectors || exit 1
-
-  # s3 compatible storage for the parquet export
+  # s3 storage to store the data as compressed parquet.
+  # Note that this is done by a connect worker
   minio:
     image: quay.io/minio/minio:RELEASE.2023-12-14T18-51-57Z
-    entrypoint:
-      - bash
-      - -ec
-    command:
-      - |
-        minio server /data --console-address ':9001' &
-        pid=$$1
-        sleep 5
-        mc alias set minio http://localhost:9000 minio minio123
-        mc mb minio/kafka || true
-        wait $$pid
+    command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minio
       MINIO_ROOT_PASSWORD: minio123

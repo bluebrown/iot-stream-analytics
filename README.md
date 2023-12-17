@@ -5,7 +5,9 @@
 First start the stack:
 
 ```bash
-docker compose up -d
+bin/install.sh # download connect plugins
+docker compose up -d # boot the system
+docker compose logs migration -f # observe the migration
 ```
 
 After a few minutes, there should be data in the [kafka
