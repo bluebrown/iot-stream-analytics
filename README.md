@@ -14,15 +14,11 @@ After a few minutes, there should be data in the [kafka
 bucket](http://localhost:9001/browser/kafka). You can authenticate with
 `minio:minio123`.
 
-Once data is available, execute the python script to fetch the data and load it
-into a data frame:
+Once data is available, you can use the [notebook](./notebook.ipynb), to
+visualize it.
 
-```bash
-python client.py
-```
-
-While you are waiting, inspect the system. For example try some of the below
-commands.
+While you are waiting, you can inspect the system. For example try some of the
+below commands.
 
 ## Useful Commands
 
@@ -37,7 +33,7 @@ docker compose exec kafka kafka-topics.sh \
 
 ```bash
 docker compose exec kafka kafka-console-consumer.sh \
-  --bootstrap-server localhost:9092 --topic mqtt-example
+  --bootstrap-server localhost:9092 --topic mqtt
 ```
 
 ### Inspect Message Structure

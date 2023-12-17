@@ -2,7 +2,7 @@
   "name": "s3-sink",
   "config": {
     "topics": "device-parameter-windowed",
-    "flush.size": 450,
+    "flush.size": 100,
     "connector.class": "io.confluent.connect.s3.S3SinkConnector",
     "storage.class": "io.confluent.connect.s3.storage.S3Storage",
     "format.class": "io.confluent.connect.s3.format.parquet.ParquetFormat",

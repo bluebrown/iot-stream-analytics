@@ -4,7 +4,7 @@ services:
   # simulate edge devices sending data to the system
   datagen:
     image: docker.io/emqx/mqttx-cli:v1.9.7
-    command: mqttx simulate --hostname emqx -f /tmp/datagen.js -pf json -t example -c 3 -im 2500
+    command: mqttx simulate --hostname emqx -f /tmp/datagen.js -pf json -t kafka -c 3 -im 10000
     volumes:
       - ./datagen.js:/tmp/datagen.js
     depends_on:
@@ -74,6 +74,7 @@ services:
       KSQL_KSQL_LOGGING_PROCESSING_STREAM_AUTO_CREATE: "true"
       KSQL_KSQL_LOGGING_PROCESSING_TOPIC_AUTO_CREATE: "true"
       KSQL_KSQL_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      KSQL_KSQL_CONNECT_URL: http://connect:8083
     healthcheck:
       test:  wget -qO - http://localhost:8088 || exit 1
     depends_on:
@@ -93,11 +94,12 @@ services:
     build: ./migration/build/
     entrypoint: migration/migrate.sh
     environment:
-      KAFKA_BOOTSTRAP_SERVER: kafka:9092
-      KAFKA_NETCLI: kafka:7777
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
       CONNECT_URL: http://connect:8083
       KSQL_URL: http://ksqldb:8088
-      MINIO_URL: http://minio:9000
+      MQTT_URL: tcp://emqx:1883
+      S3_URL: http://minio:9000
     volumes:
       - ./migration:/migration
     depends_on:
